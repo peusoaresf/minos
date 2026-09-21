@@ -10,7 +10,7 @@ mov gs,ax
 mov di,0
 
 welcome:
-    mov si,bootstrap_msg
+    mov si,welcome_msg
     add si,di
 
     mov ah,0x0E
@@ -41,7 +41,7 @@ disk_error:
 
 ; IPC: remember that data segments must come at the end, or code should jump over them
 ; correctly. Otherwise cpu doesnt care and will try to load bytes as instructions, leading to errors
-bootstrap_msg:
+welcome_msg:
     db "Welcome to MinOS!"
 
 
