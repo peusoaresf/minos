@@ -86,7 +86,7 @@ With NASM we can declare data values with the [db](https://www.nasm.us/doc/nasm0
 db 0x55,0xAA
 ```
 
-- **Being xactly 512 bytes long**
+- **Being exactly 512 bytes long**
 
 And, to finish off the 'BIOS detecting our boot code', our mbr section has to be exactly 512 bytes long starting at the first instruction and up to the magic signature (included).
 
@@ -101,9 +101,95 @@ times 510-($-$$) db 0x00      ; $ evalutes to current line offset ; $$ evalutes 
                               ; https://www.nasm.us/doc/nasm03.html#section-3.5
 ```
 
+That gets us done with the MBR setup, and from here on out our code is already running an sort of in control of the machine. Should you really wish to, you could write minimal procedures that leverage BIOS interrupt calls to do stuff such as: interacting with disk, keyboard, with the video output. For a complete kernel, this gets very limitting (at least for today's standards) but we'll leverage some of that to tread towards more fun stuff.
+
+- **Saying 'Welcome'**
+
+Before we get closer to ever loading our C Kernel code, why not say a quick hi to users, just so we know our MBR code actually works and is capable of doing something a bit more useful.
+
+For that, we are going to: 1. define a constant to hold our welcome string; and 2. print each character individually (by address reference). We'll leverage BIOS interrupts to print to the screen and simple register manipulation in order to loop all characters:
+
+
+```assembly
+.
+.
+mov fs,ax
+mov gs,ax
+; previous steps above
+
+
+mov di,0                      ; position of the current character read
+
+welcome:
+    mov si,bootstrap_msg
+    add si,di                 ; loads memory location of char in bootstrap_msg offseted by di
+
+    mov ah,0x0E               ; setup & call BIOS interrupt 0x10,E according to specs https://stanislavs.org/helppc/int_10-e.html
+    mov al,[si]
+    mov bh,0
+    mov bl,0
+    int 0x10
+
+    add di,1                  ; increments di and loops if di != 17 (the length of our string)
+    cmp di,17
+    jne welcome
+
+bootstrap_msg:
+    db "Welcome to MinOS!"    ; Stores each character sequentially at memory address starting in the label line 
+                              ; (assumes file starts at address 0 if not told otherwise).
+                              ; Since BIOS loads mbr into 0x7c00, references to addresses within this string
+                              ; (eg [bootstrap_msg+1]) would target the wrong address thus not work
+                              ; should we not specify the base with <org 0x7c00>
+
+
+; previous steps below
+times 510-($-$$) db 0x00
+.
+.
+```
+
+That will get the string `Welcome to MinOS!` printed to the screen, which gets us to the very last step of our MBR:
+
+- **Loading kernel from disk and delegating execution to it**
+
+Now it comes the time we've all been waiting for: loading the kernel from disk and delegating execution to it. Very very soon we gonna have some C code ready to run, worry not.
+
+We'll leverage, once again, BIOS interrupts to [interact with the disk](https://stanislavs.org/helppc/int_13-2.html) and load the sectors of our image that contain the kernel code.
+
+So, right after the `welcome` assembly section, but before the `boostrap_msg` data definition, we place the boot procedure:
+
+# TODO: groom this section a bit
+
+```assembly
+boot:
+    mov ah,0x02
+    mov al,8       ; 8 sectors = 4096 bytes, matches Makefile's truncate size when building mbr+kernel together;
+                   ; If these values don't align, it means we never loaded the full kernel binary into memory
+                   ; and the cpu will simply execute whatever trash bytes comes next, never reaching the kernel code
+    mov ch,0
+    mov cl,2       ; 1 indexed sector we want to load... first sector of kernel image is already the currently loaded and
+                   ; executing MBR portion, so we start at 2 for remaining kernel.
+    mov dh,0
+                   ; since MBR is already running, dl is already properly loaded with the current boot disk number
+                   ; no need to explictly set
+    mov bx,0x8000  ; the disk read interrupt expects a memory address to load data into.
+                   ; we set it defining a segment:offset couple of values held in the es:bx registers.
+                   ; if es is 0 (which it is at the top of the code), 
+                   ; the target address is exactly equal to bx, thus we instruct the BIOS to load the kernel loaded data into address 0x8000
+    int 0x13
+
+    jc disk_error     ; if the CPU carry flag is set, disk read failed so just stop.
+
+    jmp 0x0000:0x8000 ; Far jumps to the memory address we just loaded, thus cpu starts executing instruction
+                      ; at 0x8000 which is the start of our kernel code as defined in linker.ld
+                      ; Far jumps use the same address resolution as we explained for the disk loading trick above.
+
+disk_error:
+    hlt
+```
+
 Important links:
 https://en.wikipedia.org/wiki/VGA_text_mode
 https://wiki.osdev.org/A20_Line
 https://wiki.osdev.org/Protected_Mode
 https://wiki.osdev.org/GDT_Tutorial
-https://wiki.osdev.org/GCC_Cross-Compiler#Installing_Dependencies
