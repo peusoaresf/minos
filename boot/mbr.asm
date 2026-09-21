@@ -34,6 +34,31 @@ welcome:
     cmp di,20
     jne welcome
 
+boot:
+    mov ah,0x02
+    mov al,8  ; 8 sectors = 4096 bytes, matches Makefile's truncate size when building boot+kernel together;
+              ; If these values don't align, it means we never loaded the full kernel binary into memory
+              ; and the cpu will simply execute whatever trash bytes comes next, never reaching the kernel code
+    mov ch,0
+    mov cl,2
+    mov dh,0
+    mov bx,0x8000
+    int 0x13
+    jc disk_error
+
+    ; debug print whether disk read succeeds
+    mov ah,0x0E
+    mov al,'D'
+    mov bh,0
+    int 0x10
+
+    jmp 0x0000:0x8000
+
+disk_error:
+    hlt
+
+; IPC: remember that data segments must come at the end, or code should jump over them
+; correctly. Otherwise cpu doesnt care and will try to load bytes as instructions, leading to errors
 bootstrap_msg:
     db "Welcome to PernilOS!" ; stores each character sequentially at memory address starting in the label line,
                               ; assuming file starts at address 0 if not told otherwise.
