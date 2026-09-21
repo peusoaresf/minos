@@ -37,10 +37,18 @@ run: build
 		-D $(BUILD_DIR)/logs/qemu.log \
 		-display cocoa,zoom-to-fit=on
 
-.PHONY: show-bytes
-show-bytes: build
+.PHONY: img-dump
+img-dump: build
 	@xxd -g 1 $(OS_IMG)
 
-.PHONY: reverse-bytes
-reverse-bytes: build
-	@ndisasm -b 16 -o 0x7c00 $(OS_IMG)
+.PHONY: mbr-dump
+mbr-dump: build
+	@ndisasm -b 16 -o 0x7c00 $(MBR_BIN)
+
+.PHONY: kernel-dump
+kernel-dump: build
+	objdump -d build/kernel.elf
+
+.PHONY: kernel-symbols
+kernel-symbols: build
+	nm build/kernel.elf
