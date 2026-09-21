@@ -101,7 +101,6 @@ times 510-($-$$) db 0x00    ; $ evalutes to current line address offset.
                             ; $$ evalutes to start of section address offset.
                             ; $ - $$ virtually tells us how deep into the file (in bytes) we are.
                             ; Subtracting that from 510 allows us to guarantee 512 byte long file.
-                            ; Important links:
                             ; https://www.nasm.us/doc/nasm03.html#section-3.2.5
                             ; https://www.nasm.us/doc/nasm03.html#section-3.5
 ```
@@ -116,19 +115,19 @@ For that, we are going to: 1. define a constant to hold our welcome string; and 
 
 
 ```assembly
-mov di,0                    ; position of the current character read
+mov di,0                    ; Position of the current character read.
 
 welcome:
     mov si,welcome_msg
-    add si,di               ; loads memory location of char in welcome_msg offseted by di
+    add si,di               ; Loads memory location of char in welcome_msg offseted by di.
 
-    mov ah,0x0E             ; setup & call BIOS interrupt 0x10,E according to specs https://stanislavs.org/helppc/int_10-e.html
+    mov ah,0x0E             ; Setup & call BIOS interrupt 0x10,E according to specs https://stanislavs.org/helppc/int_10-e.html
     mov al,[si]
     mov bh,0
     mov bl,0
     int 0x10
 
-    add di,1                ; increments di and loops if di != 17 (the length of our string)
+    add di,1                ; Increments di and loops if di != 17 (the length of our string).
     cmp di,17
     jne welcome
 
@@ -137,7 +136,7 @@ welcome_msg:
                             ; (assumes file starts at address 0 if not told otherwise).
                             ; Since BIOS loads mbr into 0x7c00, references to addresses within this string
                             ; (eg [bootstrap_msg+1]) would target the wrong address thus not work
-                            ; should we not specify the base with <org 0x7c00>
+                            ; should we not specify the base with <org 0x7c00>.
 ```
 
 That will get the string `Welcome to MinOS!` printed to the screen, which gets us to the very last step of our MBR:
@@ -158,7 +157,7 @@ So, right after the `welcome` assembly section, but before the `boostrap_msg` da
 
 ```assembly
 ; Since we are 'inside' MBR code, the boot disk number
-; (which is the one we are interested in) is already loaded into dl.
+; (which is the one we are interested in) is already loaded into <dl>.
 ; Thus there's no need to explicitly set 'mov dl,X' when setting up the interrupt.
 
 boot:
@@ -190,7 +189,20 @@ disk_error:
     hlt
 ```
 
-Important links:
+---
+
+#### Loader
+
+_Work-in-progress._
+
+### Kernel
+
+_Work-in-progress._
+
+---
+ 
+_Important links for docs:_
+
 https://en.wikipedia.org/wiki/VGA_text_mode
 
 https://wiki.osdev.org/A20_Line
