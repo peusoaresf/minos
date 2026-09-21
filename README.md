@@ -195,7 +195,7 @@ disk_error:
 
 _Work-in-progress._
 
-### Kernel
+### The Kernel
 
 _Work-in-progress._
 
