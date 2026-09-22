@@ -36,13 +36,13 @@ Feel free to skim through, register some names here and there in the background 
 | 0x0000 | MBR                 | 512 B  | `boot/mbr.asm` <br> bootloader stage 1, real mode, BIOS entrypoint, disk read, handoff to stage 2 |
 | 0x0200 | Kernel Image        | 4096 B | `boot/loader.asm` + `kernel/startup.c` |
 |        | &nbsp;↳ Loader      |        | `boot/loader.asm` <br> bootloader stage 2, A20 line, GDT, protected mode switch, handoff to startup.c |
-|        | &nbsp;↳ Startup     |        | `kernel/startup.c` <br> Kernel C entrypoint |
+|        | &nbsp;↳ Startup     |        | `kernel/startup.c` <br> Kernel entrypoint |
 
 _**Kernel Image** is the combined linked binary containing both the loader (final boot responsibility) and the actual kernel (startup.c and beyond)._
 
-### Loading the Kernel
+### Loading the Kernel Image
 
-Before we can even think about venturing on any OS-related features, we have **to load the kernel** somehow. This 'somehow', at least for legacy IBM-Compatible BIOS pcs, **means creating a piece of code called 'bootloader' that is shaped in a very specific way** (in order to be picked-up by the bios and executed), **performs some very specific tasks** (required by the IBM-Compatible BIOS' expectations) **and ultimately loads our kernel code into memory** and starts execution.
+Before we can even think about venturing on any OS-related features, we have **to load the kernel** somehow. This 'somehow', at least for legacy IBM-Compatible BIOS pcs, **means creating a piece of code called 'bootloader' that is shaped in a very specific way** (in order to be picked-up by the bios and executed), **performs some very specific tasks** (required by the IBM-Compatible BIOS' expectations) **and ultimately loads our kernel image into memory** and starts execution.
 
 This is a major summary of the many things I've read over the recent past, written by much more knowledgeable people than me, and I'll always link where I getting stuff from (just in case my summarizations might be too simplistic or maybe outright wrong in a very deep technically spoken way, let's say, so sorry in advance! Oh, and I'll for sure mention a lot the people/articles over wiki.osdev.org).
 
@@ -126,7 +126,7 @@ That gets us done with the MBR setup, and from here on out we are already pretty
 
 - **Saying 'Welcome'**
 
-Before we get closer to ever loading our C Kernel code, why not say a quick hi to users, just so we know our MBR code actually works and is capable of doing something a bit more useful.
+Before we get closer to ever running any C code, why not say a quick hi to users, just so we know our MBR code actually works and is capable of doing something a bit more useful.
 
 For that, we are going to: 1. define a constant to hold our welcome string; and 2. print each character individually (by address + character index). We'll leverage BIOS interrupts to print to the screen and simple register manipulation in order to loop all characters:
 
@@ -168,7 +168,7 @@ We achieve that by:
 1. Making a read call to the boot disk (current disk) of size 8 sectors (equals 4096 bytes, the full size of the kernel image);
 2. Instructing the disk to read from sector 2 onwards (sector 1 holds our MBR, which is already running, we can safely skip it);
 3. Asking the disk to load the data into address 0x8000 (our `linker.ld` ensures the kernel image is aware of this);
-4. Performing a far jump to address 0x8000, essentially handing control to the kernel image (more precisely, the stage 2 bootloader).
+4. Performing a far jump to address 0x8000, essentially handing control to the stage 2 bootloader.
 
 So, right after the `welcome` assembly section, but before the `boostrap_msg` data definition, we place the boot procedure:
 
@@ -199,7 +199,7 @@ boot:
     jc disk_error     ; If the CPU carry flag is set, disk read failed so just stop.
 
     jmp 0x0000:0x8000 ; Far jumps to the memory address we just loaded.
-                      ; This essentially hands control to the kernel image loaded there (bootloader stage 2).
+                      ; This essentially hands control to the stage 2 bootloader loaded there.
                       ; The far jump address syntax works similarly to the disk read explained above.
 
 disk_error:
