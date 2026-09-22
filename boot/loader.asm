@@ -27,8 +27,8 @@ _main:
 
     mov word [0xB8002],0x0742
 
-    extern kmain
-    call kmain
+    extern startup
+    call startup
 
 hang:
     hlt

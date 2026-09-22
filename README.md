@@ -23,17 +23,34 @@ And the script will make sure to build the code and run the OS image on a i386 Q
 
 I'll try my best to document the journey of building the main components of the OS, from bootloading to essential kernel drivers/modules. I'll walkthrough the main code snippets, quirks to be aware of and important lessons-learned.
 
+### The OS Image
+
+The following is a summary table detailing the OS image, all of its sections and what each section contains / is responsible for. This is basically how the OS image file is subdivided, ie how all of the bytes inside `minos.img` are layed out.
+
+I know it's a lot to take in at once and too much for a first glimpse inside the operating system's internals, but keep in mind this is mostly a good reference table of the overall structure and responsibilities.
+
+Feel free to skim through, register some names here and there in the background of your mind, but worry not, as we'll dive deeper into each component:
+
+| Offset | Section | Size | Contents |
+|--------|---------|------|----------|
+| 0x0000 | MBR                 | 512 B  | `boot/mbr.asm` <br> bootloader stage 1, real mode, BIOS entrypoint, disk read, handoff to stage 2 |
+| 0x0200 | Kernel Image        | 4096 B | `boot/loader.asm` + `kernel/startup.c` |
+|        | &nbsp;↳ Loader      |        | `boot/loader.asm` <br> bootloader stage 2, A20 line, GDT, protected mode switch, handoff to startup.c |
+|        | &nbsp;↳ Startup     |        | `kernel/startup.c` <br> Kernel C entrypoint |
+
+_**Kernel Image** is the combined linked binary containing both the loader (final boot responsibility) and the actual kernel (startup.c and beyond)._
+
 ### Loading the Kernel
 
 Before we can even think about venturing on any OS-related features, we have **to load the kernel** somehow. This 'somehow', at least for legacy IBM-Compatible BIOS pcs, **means creating a piece of code called 'bootloader' that is shaped in a very specific way** (in order to be picked-up by the bios and executed), **performs some very specific tasks** (required by the IBM-Compatible BIOS' expectations) **and ultimately loads our kernel code into memory** and starts execution.
 
 This is a major summary of the many things I've read over the recent past, written by much more knowledgeable people than me, and I'll always link where I getting stuff from (just in case my summarizations might be too simplistic or maybe outright wrong in a very deep technically spoken way, let's say, so sorry in advance! Oh, and I'll for sure mention a lot the people/articles over wiki.osdev.org).
 
-Now is probably a good time to tell you that the aforementioned is gonna be achieved by programming in `assembly` language. Worry not, we'll eventually move up to C for actual kernel code, but we gotta get our hands on the hardware first.
+Now is probably a good time to tell you that the aforementioned is gonna be achieved by programming in `assembly` language. Worry not, we'll eventually move up to C for actual kernel code, but we gotta get our hands on the hardware first. You'll also notice that bootloading is achieved in 2 stages. This is due to the fact that stage 1 is incredibly limited (due to real mode BIOS hard constraints).
 
 ---
 
-#### MBR
+#### MBR (Stage 1)
 
 In order to achieve what I just wrote down, we first have to setup an MBR. The MBR, in the most simplistic way possible I can imagine, is the very first section (or, well.. literally 'part') of your OS image (or.. the bytes we are gonna burn to a disk and try to execute in order to spin-up the kernel) which performs some preparatory work (interfacing with the bios where needed) and loads the kernel image off the disk and into memory.
 
@@ -141,17 +158,17 @@ welcome_msg:
 
 That will get the string `Welcome to MinOS!` printed to the screen, which gets us to the very last step of our MBR:
 
-- **Loading kernel from disk and delegating execution to it**
+- **Loading kernel image from disk and delegating execution to it**
 
-Now it comes the time we've all been waiting for: loading the kernel from disk and delegating execution to it. Very very soon we gonna have some C code ready to run, worry not.
+Now it comes the time we've all been waiting for: loading the kernel image from disk and delegating execution to it. Very very soon we gonna have some C code ready to run, worry not.
 
-We'll leverage, once again, BIOS interrupts to [interact with the disk](https://stanislavs.org/helppc/int_13-2.html) and load the sectors of our image that contain the kernel code.
+We'll leverage, once again, BIOS interrupts to [interact with the disk](https://stanislavs.org/helppc/int_13-2.html) and load the sectors of our image that contain the stage 2 bootloader + startup kernel code (ie the **kernel image**).
 
 We achieve that by:
-1. Making a read call to the boot disk (current disk) of size 8 sectors (equals 4096 bytes, the full size of the kernel portion of our OS image);
+1. Making a read call to the boot disk (current disk) of size 8 sectors (equals 4096 bytes, the full size of the kernel image);
 2. Instructing the disk to read from sector 2 onwards (sector 1 holds our MBR, which is already running, we can safely skip it);
-3. Asking the disk to load the data into address 0x8000 (our `linker.ld` ensures the kernel is aware of this);
-4. Performing a far jump to address 0x8000, essentially handing control to the kernel.
+3. Asking the disk to load the data into address 0x8000 (our `linker.ld` ensures the kernel image is aware of this);
+4. Performing a far jump to address 0x8000, essentially handing control to the kernel image (more precisely, the stage 2 bootloader).
 
 So, right after the `welcome` assembly section, but before the `boostrap_msg` data definition, we place the boot procedure:
 
@@ -163,26 +180,26 @@ So, right after the `welcome` assembly section, but before the `boostrap_msg` da
 boot:
     mov ah,0x02
     mov al,8          ; 8 sectors = 4096 bytes. 
-                      ; Matches Makefile's truncate size applied to the kernel binary.
+                      ; Matches Makefile's truncate size applied to the kernel image binary.
                       ; Thus we can safely load a chunk of that size without worrying about trash.
                       ; ..If these values don't align, we risk the cpu executing whatever 
-                      ; trash bytes comes next, never reaching the kernel code
+                      ; trash bytes comes next, never reaching the kernel image code
     mov ch,0
     mov cl,2          ; 1-indexed sector we want to load from. 
                       ; 1st sector holds MBR which is already in memory.
-                      ; We ignore it and start loading kernel which resides from sector 2.
+                      ; We ignore it and start loading kernel image which resides from sector 2.
     mov dh,0
     mov bx,0x8000     ; The disk read interrupt expects a memory address to load data into.
                       ; We set it by defining a 'segment:offset' couple held in the 'es:bx' registers.
                       ; We can assume <es> is zero, since it's a part of the initial cleanup of the MBR.
                       ; With that said, the target address becomes exactly equal to <bx>.
-                      ; Thus we essentially instruct the BIOS to load the kernel into address 0x8000.
+                      ; Thus we essentially instruct the BIOS to load the kernel image into address 0x8000.
     int 0x13
 
     jc disk_error     ; If the CPU carry flag is set, disk read failed so just stop.
 
     jmp 0x0000:0x8000 ; Far jumps to the memory address we just loaded.
-                      ; This essentially hands control to the kernel code loaded there.
+                      ; This essentially hands control to the kernel image loaded there (bootloader stage 2).
                       ; The far jump address syntax works similarly to the disk read explained above.
 
 disk_error:
@@ -191,17 +208,17 @@ disk_error:
 
 ---
 
-#### Loader
+#### Loader (Stage 2)
 
-_Work-in-progress._
+_TODO: Work-in-progress._
 
 ### The Kernel
 
-_Work-in-progress._
+TODO: _Work-in-progress._
 
 ---
  
-_Important links for docs:_
+_TODO: Important links for docs, remove after_
 
 https://en.wikipedia.org/wiki/VGA_text_mode
 

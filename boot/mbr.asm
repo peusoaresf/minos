@@ -25,7 +25,7 @@ welcome:
 
 boot:
     mov ah,0x02
-    mov al,8      ; 8 sectors = 4096 bytes, matches Makefile's truncate size when building mbr+kernel together;
+    mov al,8      ; 8 sectors = 4096 bytes, matches Makefile's truncate size when building mbr+kernel image together;
     mov ch,0
     mov cl,2
     mov dh,0
@@ -43,7 +43,6 @@ disk_error:
 ; correctly. Otherwise cpu doesnt care and will try to load bytes as instructions, leading to errors
 welcome_msg:
     db "Welcome to MinOS!"
-
 
 times 510-($-$$) db 0x00
 
