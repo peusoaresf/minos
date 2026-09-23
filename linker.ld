@@ -1,4 +1,4 @@
-ENTRY(enable_a20)
+ENTRY(_loader)
 
 SECTIONS
 {

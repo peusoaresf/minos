@@ -1,55 +1,55 @@
 bits 16
-global enable_a20
+global _loader
+extern startup
 
-cli
+_loader:
+    cli ; Disable hardware interrupts
 
 enable_a20:
+    ; Call BIOS to enable full memory access
     mov ax, 0x2401
     int 0x15
 
 protected_mode_switch:
-    lgdt [gdtr]    ; load GDT register with start address of Global Descriptor Table
+    lgdt [gdtr] ; Load GDT
+
+    ; Enable CPU security flag
     mov eax,cr0
-    or al,1       ; set PE (Protection Enable) bit in CR0 (Control Register 0)
+    or al,1
     mov cr0,eax
 
-    jmp 08h:_main ; jump to code segment in gdt
-
-bits 32
-_main:
-    mov ax,0x10 ; load data segment into registers
+    ; Load offset of GDT data segment into registers
+    mov ax,0x10
     mov ds,ax
     mov es,ax
     mov fs,ax
     mov gs,ax
     mov ss,ax
-    mov esp,0x90000
 
-    mov word [0xB8002],0x0742
+    jmp 0x08:_main ; Set <cs> register to GDT code segment and jump to _main
 
-    extern startup
-    call startup
+bits 32
+_main:
+    mov esp,0x90000 ; Set up a clean stack
 
-hang:
-    hlt
-    jmp hang
+    call startup ; Hand-off to kernel
 
 gdt_start:
     dq 0x0000000000000000
 
 gdt_code:
     dw 0xFFFF
-    dw 0x0000
+    dw 0x0000 ; Address space 4GB (0000 -> FFFF * 4KB)
     db 0x00
-    db 0x9A
-    db 0xCF
+    db 0x9A   ; Sets segment as executable + readable (never writable)
+    db 0xCF   ; sets 4KB granularity and 32 bit segment operations
     db 0x00
 
 gdt_data:
     dw 0xFFFF
     dw 0x0000
     db 0x00
-    db 0x92
+    db 0x92   ; Sets segment as writable (never executable)
     db 0xCF
     db 0x00
 

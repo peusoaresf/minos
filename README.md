@@ -65,7 +65,9 @@ According to this very detailed [article on MBRs](https://wiki.osdev.org/MBR_(x8
 
 I'll already spoil the fun and note that, throughout my experimentations with QEMU, 5 and 7 were not required..... although I know this is probably setting me up for a weird bug in a near future should I ever run this code in other platforms/hardware. 
 
-Moving on. Let's see each one of those in detail (though not necessarily in order).
+Moving on. Let's see each one of those in detail (though not necessarily in order). 
+
+_Code in this section can be found in the `boot/mbr.asm` file._
 
 - **Running in real mode**
 
@@ -99,7 +101,7 @@ mov gs,ax
 
 - **Ending with magic signature 0x55AA**
 
-In order for the BIOS to properly recognize the image as our booting procedure, we must end it with the bytes 0x55AA. Yes. Hardcoded. Those values. Not much to think about.
+In order for the BIOS to properly recognize this image section as our booting procedure, we must end it with the bytes 0x55AA. Yes. Hardcoded. Those values. Not much to think about.
 
 With NASM we can declare data values with the [db](https://www.nasm.us/doc/nasm03.html#section-3.2.1) command (among a few others). So, at the very end of the file just place:
 
@@ -210,7 +212,187 @@ disk_error:
 
 #### Loader (Stage 2)
 
-_TODO: Work-in-progress._
+Okay, maybe I set us up for too much excitement by stating 'now comes the moment we've all been waiting for' and gave the idea we were about to jump into some kernel code written in C.... almost! We still have some final CPU preparations to get out of the way, but I promise it should be quick and mostly convention based.
+
+Considering stage 1 already made sure our drive is picked up by the BIOS and handed control of the hardware to us, now it's all a matter of:
+
+1. Blocking hardware interrupts to allow our stage 2 to safely  run from start to end uninterrupted;
+2. Making sure we have access to all memory (by enabling the A20 line.. whatever that is);
+3. Seting up memory access and protection behavior and switching CPU to protected mode;
+4. Seting up a clean stack and handing off execution control to the kernel (our OS' C entrypoint!).
+
+As mentioned, many of these are based on conventions or ripped straight out of specs/docs to keep the bootloader pragmatic and minimal. I'll keep linking whatever reference I can in order to keep raw hardware details close enough, but outside of the scope of this readme (I'm not a hardware or assembly expert if you haven't notice .. haha).
+
+_Code in this section can be found in the `boot/loader.asm` file._
+
+- **Blocking interrupts**
+
+Remember that when the MBR handed control off to us, we were still running in 16 bit real mode. That still applies (thus we have to explicitly start the file with the bits 16 snippet)
+
+With that said, in order to disable interrupts we simple write the following:
+
+```assembly
+bits 16
+cli
+```
+
+That way, we make sure no hardware interrupts (such as keyboard) will ever reach the cpu and risk breaking the remaining of our bootstrapping. 
+
+- **Accessing all memory (A20 line)**
+
+In order to be able to access the full memory available we gotta play with the A20 line knob. And who does want to limit themselves in memory?!
+
+This is a requirement due to historical reasons. I can't possibly know all details or even think it's very valuable to do so right now, so we can find all details [here](https://wiki.osdev.org/A20_Line). 
+
+Let's not dangle on the topic too much, we can call a simple BIOS interrupt to solve this:
+
+```assembly
+enable_a20:
+    mov ax, 0x2401
+    int 0x15
+```
+
+- **Setting up memory access and protection rules**
+
+We can't simply keep running in 16bit real mode forever right? It's highly limited and unconstrained (ie unsafe), so we better prepare and switch the processor into it's full feature set: 32bit protected mode.
+
+For that we are gonna have to setup something called a Global Descriptor Table (GDT) first. What's a GDT you might ask?... well... I just recently discovered about it myself, so the best way I can describe it in my own words is that the GDT is a set of configurations that instructs the CPU on how to _access_ and _protect_ memory. This configuration is achieved by placing blocks of 8 bytes in sequence describing segments of memory and how they should behave (and isolated bits within the bytes blocks may control specific behavior).
+
+When creating these memory segments, there are three main configurations the GDT provides that are of interest to us: 1. setting the size and granularity of the segment (from which address until which address our space is comprised, and how wide it actually is); 2. setting protection of said segment, marking it as readable, writable and/or executable; and 3. turning on 32bit segment operations.
+
+I'm 110% sure I've skipped over so much that it's insane, but still, it's a very complicated topic on its own and I had to stay pragmatic when setting it up, otherwise I'd never get a kernel up and running. If you want a deeper dive into it, you can check [all of the bits comprising GDT sections](https://wiki.osdev.org/Global_Descriptor_Table) or [how to set a basic one up](https://wiki.osdev.org/GDT_Tutorial#Flat_/_Long_Mode_Setup).
+
+For us, the second link will be a bit more important now, since it provides sensible defaults for a minimal OS, that is, setting up only 2 memory segments, one for code, another for data, kernel level access within each, no crazy isolation or paging in place. So, following the GDP contents displayed there, we can describe a GDT like so at the end of the file:
+
+```assembly
+gdt_start:
+    dq 0x0000000000000000 ; 1st section has to be a null descriptor.
+
+gdt_code:
+    dw 0xFFFF             ; Memory segment spans the whole 4GB space 
+    dw 0x0000             ; (0000 to FFFF times 4KB granularity set below).
+    db 0x00
+    db 0x9A               ; Sets code segment as executable + readable (never writable).
+    db 0xCF               ; Sets 4KB granularity and 32 bit segment operations.
+    db 0x00 ;
+
+gdt_data:
+    dw 0xFFFF
+    dw 0x0000
+    db 0x00
+    db 0x92               ; Only differing setting for data,
+    db 0xCF               ; it should be writable and readable (never executable).
+    db 0x00
+
+gdt_end:
+
+gdtr:
+    dw gdt_end - gdt_start - 1
+    dd gdt_start
+```
+
+You'll notice we are leveraging assembly's section labels in order to have a reference to the GDT's addresses at various moments (start, code, data and end), in order to compute the required addresses we are actually gonna load inside the `gdt` register right before enabling protected mode.
+
+- **Switching to protected mode**
+
+Now that we have the GDT described in memory, we can finally switch the CPU to [protected mode](https://wiki.osdev.org/Protected_Mode)! (remember, the GDP is **required** in order to do so. Protected mode _conveys protection_, GDT _describes such protection_). We'll first start by loading the table starting address in the appropriate register, set the CPU security flag to enabled and finally set up the data segment registers.
+
+```assembly
+protected_mode_switch:
+    lgdt [gdtr]    ; load <gdt> register with start address of the Global Descriptor Table.
+
+    mov eax,cr0
+    or al,1
+    mov cr0,eax    ; We can operate on the Control Register directly, 
+                   ; so through the eax register, we perform an OR operation on 
+                   ; the very first bit stored on it in order to flip it from 0 -> 1,
+                   ; thus enabling it (the 1st bit of the <cr> register is the CPU Security flag).
+
+
+
+    ; From now on the CPU operates in protected mode and under 32 bit segment operations
+
+
+
+    mov ax,0x10    ; But wait, we still need to load the index (ie offset)
+    mov ds,ax      ; of the data segment of the gdt into the data registers.
+    mov es,ax      ; Remember our GDT is composed of 8 byte blocks?
+    mov fs,ax      ; 1st one is NULL, 2nd is code and only 3rd is data.
+    mov gs,ax      ; 0x10 in decimal is 16 so... thus we offset (skip) both null and code to reach data.
+
+
+    ; Far jump sets <cs> register to the offset of the code segment within the GDT (skips null).
+    ; We have to do it here to reliable instruct the cs to align with our GDT configurations,
+    ; otherwise address operations will resolve to the wrong values and fault!
+    jmp 0x08:_main
+```
+
+- **Setting up the stack and finally handing off to Kernel!**
+
+Now we really are where we've wanted to be all along, right there, ready to run a bare bones OS written in C!
+
+All we have to do is setup the stack, cause that's where our C code is gonna be pushing and popping data from when performing operations and call the kernel startup function.
+
+For that we first instruct nasm to treat the code as 32 bit from here on out (remember we just switched the CPU to protected mode 32 bit), force the <sp> register to a safe unused address far far away from where our loaded kernel image is sitting and last but not least, hand-off control to the kernel startup function:
+
+
+```assembly
+bits 32
+_main:
+    mov esp,0x90000 ; Sets up the stack with a safe unused address
+                    ; (no way we can rely on leftover trash from real mode).
+                    ; Stack grows 'downwards' ('push'es decrements esp) before writes,
+                    ; so it has to sit comfortably far above the initial kernel image
+                    ; loaded at address (0x8000).
+
+    call startup
+```
+
+That's it! Now our `kernel/startup.c` file will take control over the system and we can keep on evolving our OS from there! Yeyyy
+
+- **One last thing to address before fully moving on to the kernel: _stitching it all together_**
+
+I haven't mentioned it before just to avoid complexity up front, but we gotta somehow link things together. What that means is, the MBR code will redirect the CPU to continue execution from a certain address and the loader code must know where to pick up where the MBR left it off. For that, at the top of the `loader.asm` file we have define an entrypoint with:
+
+```assembly
+global _loader
+```
+
+That name is reference in the `linker.ld` file alongside the base address the loader should assume be using while operating (so operations resolve correctly from that base):
+
+```
+ENTRY(_loader)
+
+SECTIONS
+{
+    . = 0x8000;
+.
+.
+.
+```
+
+This is the connective tissue between `boot/mbr.asm` and `boot/loader.asm`, making the call to `jmp 0x0000:0x8000` from the former land on the latter.
+
+When it comes to the loader calling the kernel startup function, that's achieved by defining the call to startup as something that's gonna be externally linked to the assembly, once again, at the top of the file you'll notice:
+
+```
+extern startup
+```
+
+Which means to say that when compiling `loader.asm` into an object file, even though `startup` is not define anywhere, the compiler should not freak out. It's going to be provided in a later step before generating the final binary. And that's exactly what we do by compiling both sources -> linking them together -> generating a binary containing both in the makefile:
+
+```bash
+# compiles the loader to an object and the 'extern' keyword makes sure the compiler won't break due to the absence of 'startup'
+nasm -f elf32 boot/loader.asm -o build/loader.o
+
+# compiles the kernel startup file
+i686-elf-gcc -march=i386 -m32 -ffreestanding -fno-pie -c kernel/startup.c -o build/startup.o
+
+# links both together, gluing the startup call present in one source file to its definition present in the other
+i686-elf-ld -T linker.ld build/loader.o build/startup.o -o build/kernel_image.elf
+```
+
+That's it, now we can really go on to more fun and """"higher"""" level stuff... let's see if we keep that good energy when building device drivers lmaooo.
 
 ### The Kernel
 
@@ -222,8 +404,4 @@ _TODO: Important links for docs, remove after_
 
 https://en.wikipedia.org/wiki/VGA_text_mode
 
-https://wiki.osdev.org/A20_Line
-
-https://wiki.osdev.org/Protected_Mode
-
-https://wiki.osdev.org/GDT_Tutorial
+https://cdrdv2.intel.com/v1/dl/getContent/671200 (intel manual)
