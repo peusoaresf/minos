@@ -214,7 +214,7 @@ disk_error:
 
 Okay, maybe I set us up for too much excitement by stating 'now comes the moment we've all been waiting for' and gave the idea we were about to jump into some kernel code written in C.... almost! We still have some final CPU preparations to get out of the way, but I promise it should be quick and mostly convention based.
 
-Considering stage 1 already made sure our drive is picked up by the BIOS and handed control of the hardware to us, now it's all a matter of:
+Considering stage 1 already made sure our driver is picked up by the BIOS and handed control of the hardware to us, now it's all a matter of:
 
 1. Blocking hardware interrupts to allow our stage 2 to safely  run from start to end uninterrupted;
 2. Making sure we have access to all memory (by enabling the A20 line.. whatever that is);
@@ -227,9 +227,9 @@ _Code in this section can be found in the `boot/loader.asm` file._
 
 - **Blocking interrupts**
 
-Remember that when the MBR handed control off to us, we were still running in 16 bit real mode. That still applies (thus we have to explicitly start the file with the bits 16 snippet)
+Remember that when the MBR handed control off to us, we were still running in 16 bit real mode. That still applies, thus we have to explicitly start the file with the bits 16 snippet.
 
-With that said, in order to disable interrupts we simple write the following:
+With that said, and in order to disable interrupts we simply write the following:
 
 ```assembly
 bits 16
@@ -280,7 +280,7 @@ gdt_data:
     dw 0xFFFF
     dw 0x0000
     db 0x00
-    db 0x92               ; Only differing setting for data,
+    db 0x92               ; Only differing setting for data:
     db 0xCF               ; it should be writable and readable (never executable).
     db 0x00
 
@@ -295,7 +295,7 @@ You'll notice we are leveraging assembly's section labels in order to have a ref
 
 - **Switching to protected mode**
 
-Now that we have the GDT described in memory, we can finally switch the CPU to [protected mode](https://wiki.osdev.org/Protected_Mode)! (remember, the GDP is **required** in order to do so. Protected mode _conveys protection_, GDT _describes such protection_). We'll first start by loading the table starting address in the appropriate register, set the CPU security flag to enabled and finally set up the data segment registers.
+Now that we have the GDT described in memory, we can finally switch the CPU to [protected mode](https://wiki.osdev.org/Protected_Mode)! (remember, the GDT is **required** in order to do so. Protected mode _conveys protection_, GDT _describes such protection_). We'll first start by loading the table starting address in the appropriate register, set the CPU security flag to enabled and finally set up the data segment registers.
 
 ```assembly
 protected_mode_switch:
@@ -303,7 +303,7 @@ protected_mode_switch:
 
     mov eax,cr0
     or al,1
-    mov cr0,eax    ; We can operate on the Control Register directly, 
+    mov cr0,eax    ; We can't operate on the Control Register directly, 
                    ; so through the eax register, we perform an OR operation on 
                    ; the very first bit stored on it in order to flip it from 0 -> 1,
                    ; thus enabling it (the 1st bit of the <cr> register is the CPU Security flag).
@@ -318,11 +318,11 @@ protected_mode_switch:
     mov ds,ax      ; of the data segment of the gdt into the data registers.
     mov es,ax      ; Remember our GDT is composed of 8 byte blocks?
     mov fs,ax      ; 1st one is NULL, 2nd is code and only 3rd is data.
-    mov gs,ax      ; 0x10 in decimal is 16 so... thus we offset (skip) both null and code to reach data.
+    mov gs,ax      ; 0x10 in decimal is 16 so... we offset (skip) both null and code to reach data.
 
 
     ; Far jump sets <cs> register to the offset of the code segment within the GDT (skips null).
-    ; We have to do it here to reliable instruct the cs to align with our GDT configurations,
+    ; We have to do it here to reliably instruct <cs> to align with our GDT configurations,
     ; otherwise address operations will resolve to the wrong values and fault!
     jmp 0x08:_main
 ```
@@ -331,7 +331,7 @@ protected_mode_switch:
 
 Now we really are where we've wanted to be all along, right there, ready to run a bare bones OS written in C!
 
-All we have to do is setup the stack, cause that's where our C code is gonna be pushing and popping data from when performing operations and call the kernel startup function.
+All we have to do is setup the stack, cause that's where our C code is gonna be pushing and popping data from when performing operations.
 
 For that we first instruct nasm to treat the code as 32 bit from here on out (remember we just switched the CPU to protected mode 32 bit), force the <sp> register to a safe unused address far far away from where our loaded kernel image is sitting and last but not least, hand-off control to the kernel startup function:
 
@@ -352,13 +352,13 @@ That's it! Now our `kernel/startup.c` file will take control over the system and
 
 - **One last thing to address before fully moving on to the kernel: _stitching it all together_**
 
-I haven't mentioned it before just to avoid complexity up front, but we gotta somehow link things together. What that means is, the MBR code will redirect the CPU to continue execution from a certain address and the loader code must know where to pick up where the MBR left it off. For that, at the top of the `loader.asm` file we have define an entrypoint with:
+I haven't mentioned it before just to avoid complexity up front, but we gotta somehow link things together. What that means is, the MBR code will redirect the CPU to continue execution from a certain address and the loader code must know where to pick up where the MBR left it off. For that, at the top of the `loader.asm` file we have defined an entrypoint with:
 
 ```assembly
 global _loader
 ```
 
-That name is reference in the `linker.ld` file alongside the base address the loader should assume be using while operating (so operations resolve correctly from that base):
+That name is referenced in the `linker.ld` file alongside the base address the loader should assume to be using while operating (so memory operations resolve correctly from that base):
 
 ```
 ENTRY(_loader)
@@ -379,7 +379,7 @@ When it comes to the loader calling the kernel startup function, that's achieved
 extern startup
 ```
 
-Which means to say that when compiling `loader.asm` into an object file, even though `startup` is not define anywhere, the compiler should not freak out. It's going to be provided in a later step before generating the final binary. And that's exactly what we do by compiling both sources -> linking them together -> generating a binary containing both in the makefile:
+Which means to say that when compiling `loader.asm` into an object file, even though `startup` is not defined anywhere, the compiler should not freak out. It's going to be provided in a later step before generating the final binary. And that's exactly what we do by compiling both sources -> linking them together -> generating a binary containing both in the makefile:
 
 ```bash
 # compiles the loader to an object and the 'extern' keyword makes sure the compiler won't break due to the absence of 'startup'
